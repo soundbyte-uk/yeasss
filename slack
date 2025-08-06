@@ -1,0 +1,245 @@
+#!/bin/sh -e
+
+set -o pipefail || true
+	# of course this doesn't work in dash, sigh
+	# (it should be ok here because of the jq checks anyway)
+
+if ! (which jq >/dev/null 2>/dev/null); then
+	>&2 echo "jq is not installed, so this was going to fail later and is failing now instead"
+	exit 4
+fi
+if ! (which curl >/dev/null 2>/dev/null); then
+	>&2 echo "curl is not installed, so this was going to fail later and is failing now instead"
+	exit 4
+fi
+
+if [ -z "$SLACK_ACCESS_TOKEN" ]; then
+	>&2 echo "SLACK_ACCESS_TOKEN is required but is missing"
+	exit 5
+fi
+
+if [ -z "$SLACK_CHANNEL" ]; then
+	SLACK_CHANNEL="$SLACK_DEFAULT_CHANNEL"
+fi
+if [ -z "$SLACK_CHANNEL" ]; then
+	>&2 echo "SLACK_CHANNEL or SLACK_DEFAULT_CHANNEL is required but is missing"
+	exit 6
+fi
+
+usage()(
+	>&2 echo "$0 send <text> (returns a timestamp)"
+	>&2 echo "$0 update <timestamp> <text>"
+	>&2 echo "$0 delete <timestamp>"
+	>&2 echo "$0 react <timestamp> <emoji-name>"
+	>&2 echo "$0 unreact <timestamp> <emoji-name>"
+	exit 1
+)
+
+# Some nice emoji to use for build statuses:
+# :heavy_check_mark:
+# :hourglass:
+# :waiting: (spin)
+# :x: (red x)
+
+output_filter()(
+	jq -r 'if .ok then .ts else error(.) end'
+		# amusingly, error() actually produces an error because . is not a string
+		# however, the effect is (almost) the same -- it still prints the body to stderr
+)
+
+main()(
+	command="$1"
+	if [ -z "$command" ]; then
+		usage
+		exit 1
+	fi
+	shift
+	case "$command" in
+		send)
+			send "$@"
+			;;
+		update)
+			update "$@"
+			;;
+		delete)
+			delete "$@"
+			;;
+		react)
+			react "$@"
+			;;
+		unreact)
+			unreact "$@"
+			;;
+		*)
+			usage
+			exit 1
+	esac
+)
+
+delete()(
+	[ -n "$1" ] || (usage; exit 1)
+	curl --fail -sS 'https://slack.com/api/chat.delete' \
+		--oauth2-bearer "$SLACK_ACCESS_TOKEN" \
+		-d channel="$SLACK_CHANNEL" \
+		-d ts="$1" \
+		| output_filter
+)
+# example response
+#   {
+#       "ok": true,
+#       "channel": "C77DD77DD7D",
+#       "ts": "1752789590.210759"
+#   }
+
+react()(
+	[ -n "$1" ] || (usage; exit 1)
+	[ -n "$2" ] || (usage; exit 1)
+	curl --fail -sS 'https://slack.com/api/reactions.add' \
+		--oauth2-bearer "$SLACK_ACCESS_TOKEN" \
+		-d channel="$SLACK_CHANNEL" \
+		-d ts="$1" \
+		-d name="$2" \
+		| output_filter
+)
+unreact()(
+	[ -n "$1" ] || (usage; exit 1)
+	[ -n "$2" ] || (usage; exit 1)
+	curl --fail -sS 'https://slack.com/api/reactions.remove' \
+		--oauth2-bearer "$SLACK_ACCESS_TOKEN" \
+		-d channel="$SLACK_CHANNEL" \
+		-d ts="$1" \
+		-d name="$2" \
+		| output_filter
+)
+# NOTE these both need a special scope so I can't test it today:
+# {"ok":false,"error":"missing_scope","needed":"reactions:write","provided":"chat:write,files:write"}
+#
+# Probably it would normally return something very similar to `delete`, I guess.
+
+send()(
+	[ -n "$1" ] || (usage; exit 1)
+	curl --fail -sS 'https://slack.com/api/chat.postMessage' \
+		--oauth2-bearer "$SLACK_ACCESS_TOKEN" \
+		-d channel="$SLACK_CHANNEL" \
+		-d text="$1" \
+		-d pretty=1 \
+		| output_filter
+)
+# example response
+#   {
+#       "ok": true,
+#       "channel": "C77DD77DD7D",
+#       "ts": "1752789590.210759",
+#       "message": {
+#           "user": "U77D77D7D7D",
+#           "type": "message",
+#           "ts": "1752789590.210759",
+#           "bot_id": "B77DDD7DD7D",
+#           "app_id": "A77D7D7DDDD",
+#           "text": "Hello I am testing :waiting:",
+#           "team": "TDDD77DDD",
+#           "bot_profile": {
+#               "id": "B77DDD7DD7D",
+#               "app_id": "A77D7D7DDDD",
+#               "user_id": "U77D77D7D7D",
+#               "name": "Stupid App",
+#               "icons": {
+#                   "image_36": "https://a.slack-edge.com/80588/img/plugins/app/bot_36.png",
+#                   "image_48": "https://a.slack-edge.com/80588/img/plugins/app/bot_48.png",
+#                   "image_72": "https://a.slack-edge.com/80588/img/plugins/app/service_72.png"
+#               },
+#               "deleted": false,
+#               "updated": 1739549007,
+#               "team_id": "TDDD77DDD"
+#           },
+#           "blocks": [
+#               {
+#                   "type": "rich_text",
+#                   "block_id": "tzVcl",
+#                   "elements": [
+#                       {
+#                           "type": "rich_text_section",
+#                           "elements": [
+#                               {
+#                                   "type": "text",
+#                                   "text": "Hello I am testing "
+#                               },
+#                               {
+#                                   "type": "emoji",
+#                                   "name": "waiting"
+#                               }
+#                           ]
+#                       }
+#                   ]
+#               }
+#           ]
+#       }
+#   }
+
+update()(
+	[ -n "$1" ] || (usage; exit 1)
+	[ -n "$2" ] || (usage; exit 1)
+	curl --fail -sS 'https://slack.com/api/chat.update' \
+		--oauth2-bearer "$SLACK_ACCESS_TOKEN" \
+		-d channel="$SLACK_CHANNEL" \
+		-d ts="$1" \
+		-d text="$2" \
+		-d pretty=1 \
+		| output_filter
+)
+# example response
+#   {
+#       "ok": true,
+#       "channel": "C07DD77DD7D",
+#       "ts": "1752789590.210759",
+#       "text": "Hello I am done :checked:",
+#       "message": {
+#           "user": "U77D77D7D7D",
+#           "type": "message",
+#           "edited": {
+#               "user": "B77DDD7DD7D",
+#               "ts": "1752789729.000000"
+#           },
+#           "bot_id": "B77DDD7DD7D",
+#           "app_id": "A77D7D7DDDD",
+#           "text": "Hello I am done :checked:",
+#           "team": "TDDD77DDD",
+#           "bot_profile": {
+#               "id": "B77DDD7DD7D",
+#               "app_id": "A77D7D7DDDD",
+#               "user_id": "U77D77D7D7D",
+#               "name": "Stupid App",
+#               "icons": {
+#                   "image_36": "https://a.slack-edge.com/80588/img/plugins/app/bot_36.png",
+#                   "image_48": "https://a.slack-edge.com/80588/img/plugins/app/bot_48.png",
+#                   "image_72": "https://a.slack-edge.com/80588/img/plugins/app/service_72.png"
+#               },
+#               "deleted": false,
+#               "updated": 1739549007,
+#               "team_id": "TDDD77DDD"
+#           },
+#           "blocks": [
+#               {
+#                   "type": "rich_text",
+#                   "block_id": "SkX+",
+#                   "elements": [
+#                       {
+#                           "type": "rich_text_section",
+#                           "elements": [
+#                               {
+#                                   "type": "text",
+#                                   "text": "Hello I am done "
+#                               },
+#                               {
+#                                   "type": "emoji",
+#                                   "name": "checked"
+#                               }
+#                           ]
+#                       }
+#                   ]
+#               }
+#           ]
+#       }
+#   }
+
+main "$@"
