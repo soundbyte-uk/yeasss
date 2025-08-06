@@ -13,25 +13,32 @@ if ! (which curl >/dev/null 2>/dev/null); then
 	exit 4
 fi
 
-if [ -z "$SLACK_ACCESS_TOKEN" ]; then
-	>&2 echo "SLACK_ACCESS_TOKEN is required but is missing"
-	exit 5
-fi
+if [ -n "$*" ]; then
+	# let no-args through to make it easier to get the usage message
 
-if [ -z "$SLACK_CHANNEL" ]; then
-	SLACK_CHANNEL="$SLACK_DEFAULT_CHANNEL"
-fi
-if [ -z "$SLACK_CHANNEL" ]; then
-	>&2 echo "SLACK_CHANNEL or SLACK_DEFAULT_CHANNEL is required but is missing"
-	exit 6
+	if [ -z "$SLACK_ACCESS_TOKEN" ]; then
+		>&2 echo "SLACK_ACCESS_TOKEN is required but is missing"
+		exit 5
+	fi
+
+	if [ -z "$SLACK_CHANNEL" ]; then
+		SLACK_CHANNEL="$SLACK_DEFAULT_CHANNEL"
+	fi
+	if [ -n "$@" -a -z "$SLACK_CHANNEL" ]; then
+		>&2 echo "SLACK_CHANNEL or SLACK_DEFAULT_CHANNEL is required but is missing"
+		exit 6
+	fi
 fi
 
 usage()(
-	>&2 echo "$0 send <text> (returns a timestamp)"
-	>&2 echo "$0 update <timestamp> <text>"
-	>&2 echo "$0 delete <timestamp>"
-	>&2 echo "$0 react <timestamp> <emoji-name>"
-	>&2 echo "$0 unreact <timestamp> <emoji-name>"
+	>&2 echo "Usage:"
+	>&2 echo "  $0 send <text>"
+	>&2 echo "        (returns a timestamp)"
+	>&2 echo "then:"
+	>&2 echo "  $0 update  <timestamp> <text>"
+	>&2 echo "  $0 delete  <timestamp>"
+	>&2 echo "  $0 react   <timestamp> <emoji-name>"
+	>&2 echo "  $0 unreact <timestamp> <emoji-name>"
 	exit 1
 )
 
